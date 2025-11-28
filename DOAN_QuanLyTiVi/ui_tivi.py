@@ -235,3 +235,4 @@ class QuanLyTivi(ttk.Frame):
             else: messagebox.showerror("Lỗi", "Không thể xóa.")
     def thoat(self):
         self.master.destroy()
+    

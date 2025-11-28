@@ -93,3 +93,5 @@ class QuanLyNhaCungCap(ttk.Frame):
     def xoa(self):
         if not self.var_id.get(): return
         if messagebox.askyesno("Xóa", "Bạn chắc chứ?"): db.xoa_ncc(self.var_id.get()); self.load_data(); self.them()
+    
+    

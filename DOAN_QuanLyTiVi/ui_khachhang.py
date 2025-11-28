@@ -126,3 +126,5 @@ class QuanLyKhachHang(ttk.Frame):
         if messagebox.askyesno("Xóa", f"Xóa khách {item[1]}?"):
             if db.xoa_khach_hang(item[0]): self.load_data(); self.clear_form(); self.reset_buttons()
             else: messagebox.showerror("Lỗi", "Không thể xóa")
+
+    

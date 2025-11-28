@@ -202,3 +202,4 @@ class QuanLyNhanVien(ttk.Frame):
 
     def thoat(self):
         self.master.destroy()
+    

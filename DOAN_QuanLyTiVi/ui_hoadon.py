@@ -277,3 +277,5 @@ class QuanLyHoaDon(ttk.Frame):
         for r in self.tree_ct.get_children(): self.tree_ct.delete(r)
         for ct in db.lay_chi_tiet_hoa_don(id_hd):
             self.tree_ct.insert("", "end", values=(ct['ten_tv'], ct['so_luong'], f"{ct['don_gia_luc_ban']:,.0f}", f"{ct['thanh_tien']:,.0f}"))
+
+    
