@@ -9,9 +9,8 @@ from openpyxl.styles import Font, Alignment, Border, Side
 from tkinter import filedialog
 import os
 
-
 DB_CONFIG = {
-    "host": "127.0.0.1", 
+    "host": "localhost",
     "user": "root", 
     "password": "", 
     "database": "qlcuahangtivi" 
@@ -19,55 +18,72 @@ DB_CONFIG = {
 WINDOW_WIDTH = 1000
 WINDOW_HEIGHT = 600
 
-
 def connect_db(use_database=True):
     """
     Kết nối đến MySQL. 
-    use_database=False dùng để kết nối kiểm tra và tạo CSDL.
+    Nếu Database chưa tồn tại, hàm này sẽ tự động tạo nó.
     """
     config = DB_CONFIG.copy()
+
     if not use_database:
         config.pop("database", None)
+        
     try:
         return mysql.connector.connect(**config)
     except mysql.connector.Error as err:
-        if err.errno == 2003:
-             messagebox.showerror("Lỗi Kết Nối CSDL", 
-                                  "Lỗi 2003: Không thể kết nối đến MySQL. Vui lòng kiểm tra XAMPP (MySQL đang chạy trên cổng 3306).")
+        if err.errno == mysql.connector.errorcode.ER_BAD_DB_ERROR:
+            print("Database chưa có, đang tự động tạo...")
+            if create_database_root():
+                return mysql.connector.connect(**DB_CONFIG)
+            else:
+                return None
+
+        elif err.errno == 2003:
+             messagebox.showerror("Lỗi Kết Nối", "Không thể kết nối MySQL!\nHãy chắc chắn bạn đã BẬT XAMPP (Cổng 3306).")
+             return None
+
         elif err.errno == mysql.connector.errorcode.ER_ACCESS_DENIED_ERROR:
-            messagebox.showerror("Lỗi CSDL", "Tên người dùng hoặc mật khẩu MySQL không đúng.")
-        elif err.errno == mysql.connector.errorcode.ER_BAD_DB_ERROR and use_database:
-            return None 
+            messagebox.showerror("Lỗi Đăng Nhập", "Sai User hoặc Password của MySQL.")
+            return None
         else:
-            messagebox.showerror("Lỗi Kết Nối CSDL", f"Kiểm tra cấu hình DB.\nLỗi: {err}")
+            messagebox.showerror("Lỗi MySQL", f"Chi tiết lỗi: {err}")
             return None
 
+def create_database_root():
+    """Hàm phụ: Kết nối quyền root để tạo Database rỗng."""
+    try:
+        temp_config = DB_CONFIG.copy()
+        temp_config.pop("database", None)
+        conn = mysql.connector.connect(**temp_config)
+        cur = conn.cursor()
+        cur.execute(f"CREATE DATABASE IF NOT EXISTS {DB_CONFIG['database']}")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        messagebox.showerror("Lỗi Tạo DB", f"Không thể tạo Database tự động: {e}")
+        return False
+
 def setup_database():
-    """Kiểm tra và tạo CSDL cùng các bảng cần thiết."""
-    conn = connect_db(use_database=False)
+    """Kiểm tra và tạo Bảng."""
+    conn = connect_db() 
     if conn is None: 
         return False
         
     cur = conn.cursor()
-    db_name = DB_CONFIG['database']
     
     try:
-        cur.execute(f"CREATE DATABASE IF NOT EXISTS {db_name}")
-        conn.database = db_name
         tables = {}
-        tables['NhanVien'] = ("CREATE TABLE NhanVien ( MaNV VARCHAR(10) PRIMARY KEY, HoLot VARCHAR(100), Ten VARCHAR(50), ChucVu VARCHAR(50), Phai VARCHAR(10), NgaySinh DATE ) ENGINE=InnoDB")
-        tables['KhachHang'] = ("CREATE TABLE KhachHang ( MaKH VARCHAR(10) PRIMARY KEY, TenKH VARCHAR(150), SoDT VARCHAR(15), DiaChi VARCHAR(255) ) ENGINE=InnoDB")
-        tables['NhaCungCap'] = ("CREATE TABLE NhaCungCap ( MaNCC VARCHAR(10) PRIMARY KEY, TenNCC VARCHAR(150), SoDTNCC VARCHAR(15), DiaChiNCC VARCHAR(255) ) ENGINE=InnoDB")
-        tables['SanPham'] = ("CREATE TABLE SanPham ( MaSP VARCHAR(10) PRIMARY KEY, TenSP VARCHAR(255), DonViTinh VARCHAR(50), GiaBan DECIMAL(10, 2), SoLuongTon INT, MaNCC VARCHAR(10), FOREIGN KEY (MaNCC) REFERENCES NhaCungCap(MaNCC) ON DELETE SET NULL ) ENGINE=InnoDB")
-        tables['HoaDon'] = ("CREATE TABLE HoaDon ( MaHD VARCHAR(10) PRIMARY KEY, NgayLap DATE, MaNV VARCHAR(10), MaKH VARCHAR(10), TongTien DECIMAL(10, 2), FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV) ON DELETE SET NULL, FOREIGN KEY (MaKH) REFERENCES KhachHang(MaKH) ON DELETE SET NULL ) ENGINE=InnoDB")
-        tables['ChiTietHoaDon'] = ("CREATE TABLE ChiTietHoaDon ( MaHD VARCHAR(10), MaSP VARCHAR(10), SoLuong INT, DonGia DECIMAL(10, 2), ThanhTien DECIMAL(10, 2), PRIMARY KEY (MaHD, MaSP), FOREIGN KEY (MaHD) REFERENCES HoaDon(MaHD) ON DELETE CASCADE, FOREIGN KEY (MaSP) REFERENCES SanPham(MaSP) ON DELETE CASCADE ) ENGINE=InnoDB")
-        tables['LichSuIn'] = ("CREATE TABLE LichSuIn ( id INT AUTO_INCREMENT PRIMARY KEY, MaHD VARCHAR(10), ThoiGianIn DATETIME, NguoiIn VARCHAR(50), FOREIGN KEY (MaHD) REFERENCES HoaDon(MaHD) ON DELETE CASCADE ) ENGINE=InnoDB")
+        tables['NhanVien'] = ("CREATE TABLE IF NOT EXISTS NhanVien ( MaNV VARCHAR(10) PRIMARY KEY, HoLot VARCHAR(100), Ten VARCHAR(50), ChucVu VARCHAR(50), Phai VARCHAR(10), NgaySinh DATE ) ENGINE=InnoDB")
+        tables['KhachHang'] = ("CREATE TABLE IF NOT EXISTS KhachHang ( MaKH VARCHAR(10) PRIMARY KEY, TenKH VARCHAR(150), SoDT VARCHAR(15), DiaChi VARCHAR(255) ) ENGINE=InnoDB")
+        tables['NhaCungCap'] = ("CREATE TABLE IF NOT EXISTS NhaCungCap ( MaNCC VARCHAR(10) PRIMARY KEY, TenNCC VARCHAR(150), SoDTNCC VARCHAR(15), DiaChiNCC VARCHAR(255) ) ENGINE=InnoDB")
+        tables['SanPham'] = ("CREATE TABLE IF NOT EXISTS SanPham ( MaSP VARCHAR(10) PRIMARY KEY, TenSP VARCHAR(255), DonViTinh VARCHAR(50), GiaBan DECIMAL(10, 2), SoLuongTon INT, MaNCC VARCHAR(10), FOREIGN KEY (MaNCC) REFERENCES NhaCungCap(MaNCC) ON DELETE SET NULL ) ENGINE=InnoDB")
+        tables['HoaDon'] = ("CREATE TABLE IF NOT EXISTS HoaDon ( MaHD VARCHAR(10) PRIMARY KEY, NgayLap DATE, MaNV VARCHAR(10), MaKH VARCHAR(10), TongTien DECIMAL(10, 2), FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV) ON DELETE SET NULL, FOREIGN KEY (MaKH) REFERENCES KhachHang(MaKH) ON DELETE SET NULL ) ENGINE=InnoDB")
+        tables['ChiTietHoaDon'] = ("CREATE TABLE IF NOT EXISTS ChiTietHoaDon ( MaHD VARCHAR(10), MaSP VARCHAR(10), SoLuong INT, DonGia DECIMAL(10, 2), ThanhTien DECIMAL(10, 2), PRIMARY KEY (MaHD, MaSP), FOREIGN KEY (MaHD) REFERENCES HoaDon(MaHD) ON DELETE CASCADE, FOREIGN KEY (MaSP) REFERENCES SanPham(MaSP) ON DELETE CASCADE ) ENGINE=InnoDB")
+        tables['LichSuIn'] = ("CREATE TABLE IF NOT EXISTS LichSuIn ( id INT AUTO_INCREMENT PRIMARY KEY, MaHD VARCHAR(10), ThoiGianIn DATETIME, NguoiIn VARCHAR(50), FOREIGN KEY (MaHD) REFERENCES HoaDon(MaHD) ON DELETE CASCADE ) ENGINE=InnoDB")
 
         for name, ddl in tables.items():
-            cur.execute(f"SHOW TABLES LIKE '{name}'")
-            if not cur.fetchone():
-                cur.execute(ddl)
-                print(f"Đã tạo bảng: {name}")
+            cur.execute(ddl)
 
         return True
     
@@ -79,68 +95,61 @@ def setup_database():
         conn.close()
 
 def create_sample_data():
-    """Tự động thêm dữ liệu mẫu nếu bảng còn trống."""
+    """Tự động thêm dữ liệu mẫu (Sử dụng INSERT IGNORE để tránh lỗi trùng)."""
     conn = connect_db()
     if not conn: return
 
     cur = conn.cursor()
     try:
         # 1. NHÀ CUNG CẤP
-        sql_ncc = """
+        cur.execute("""
         INSERT IGNORE INTO NhaCungCap (MaNCC, TenNCC, DiaChiNCC, SoDTNCC) VALUES
         ('NCC01', 'Công ty Samsung Vina', 'Số 2, Hải Triều, Q.1, TP.HCM', '02839157310'),
         ('NCC02', 'Sony Electronics VN', 'Tầng 6, Hoàn Kiếm, Hà Nội', '1800588885'),
         ('NCC03', 'LG Electronics VN', 'KCN Nhơn Trạch, Đồng Nai', '18001503');
-        """
-        cur.execute(sql_ncc)
+        """)
 
         # 2. NHÂN VIÊN
-        sql_nv = """
+        cur.execute("""
         INSERT IGNORE INTO NhanVien (MaNV, HoLot, Ten, Phai, NgaySinh, ChucVu) VALUES
         ('NV01', 'Nguyễn Văn', 'An', 'Nam', '1990-05-15', 'Quản lý'),
         ('NV02', 'Trần Thị', 'Bình', 'Nữ', '1995-08-20', 'Thu ngân'),
         ('NV03', 'Lê Hoàng', 'Nam', 'Nam', '1998-12-10', 'Nhân viên kho');
-        """
-        cur.execute(sql_nv)
+        """)
 
         # 3. KHÁCH HÀNG
-        sql_kh = """
+        cur.execute("""
         INSERT IGNORE INTO KhachHang (MaKH, TenKH, DiaChi, SoDT) VALUES
         ('KH01', 'Phạm Minh Tuấn', '123 Lê Lợi, Q.1, TP.HCM', '0909123456'),
         ('KH02', 'Đỗ Thúy Hằng', '45 Trần Hưng Đạo, Đà Nẵng', '0918887777'),
         ('KH03', 'Ngô Văn Long', '78 Nguyễn Trãi, Hà Nội', '0987654321');
-        """
-        cur.execute(sql_kh)
+        """)
 
         # 4. SẢN PHẨM (TIVI)
-        sql_sp = """
+        cur.execute("""
         INSERT IGNORE INTO SanPham (MaSP, TenSP, DonViTinh, GiaBan, SoLuongTon, MaNCC) VALUES
         ('SP001', 'Smart TV Samsung 4K 50 inch', 'Cái', 12500000, 20, 'NCC01'),
         ('SP002', 'Android TV Sony 43 inch', 'Cái', 9800000, 15, 'NCC02'),
         ('SP003', 'TV LG Nanocell 55 inch', 'Cái', 15200000, 10, 'NCC03'),
         ('SP004', 'TV Samsung QLED 65 inch', 'Cái', 22000000, 5, 'NCC01'),
         ('SP005', 'TV Sony OLED 55 inch', 'Cái', 28500000, 8, 'NCC02');
-        """
-        cur.execute(sql_sp)
+        """)
 
         # 5. HÓA ĐƠN
-        sql_hd = """
+        cur.execute("""
         INSERT IGNORE INTO HoaDon (MaHD, NgayLap, MaNV, MaKH, TongTien) VALUES
         ('HD001', '2023-11-01', 'NV02', 'KH01', 12500000),
         ('HD002', '2023-11-02', 'NV02', 'KH02', 30400000);
-        """
-        cur.execute(sql_hd)
+        """)
 
         # 6. CHI TIẾT HÓA ĐƠN
-        sql_cthd = """
+        cur.execute("""
         INSERT IGNORE INTO ChiTietHoaDon (MaHD, MaSP, SoLuong, DonGia, ThanhTien) VALUES
         ('HD001', 'SP001', 1, 12500000, 12500000),
         ('HD002', 'SP003', 2, 15200000, 30400000);
-        """
-        cur.execute(sql_cthd)
+        """)
 
         conn.commit()
-        print("Đã nạp dữ liệu mẫu thành công!")
     except Exception as e:
         print(f"Lỗi nạp dữ liệu mẫu: {e}")
     finally:
@@ -153,7 +162,6 @@ def center_window(win, w=WINDOW_WIDTH, h=WINDOW_HEIGHT):
     x = (ws // 2) - (w // 2)
     y = (hs // 2) - (h // 2)
     win.geometry(f'{w}x{h}+{x}+{y}')
-
 
 
 # HÀM MỞ CỬA SỔ CHUNG
