@@ -1,4 +1,5 @@
 import tkinter as tk
+import uuid
 from tkinter import ttk, messagebox
 import mysql.connector
 from tkcalendar import DateEntry
@@ -17,6 +18,9 @@ DB_CONFIG = {
 }
 WINDOW_WIDTH = 1000
 WINDOW_HEIGHT = 600
+
+global invoice_counter
+invoice_counter = 0
 
 def connect_db(use_database=True):
     """
@@ -48,7 +52,27 @@ def connect_db(use_database=True):
         else:
             messagebox.showerror("Lỗi MySQL", f"Chi tiết lỗi: {err}")
             return None
-
+def check_mahd_exists(ma_hd_to_check):
+    """Kiểm tra xem Mã HD đã tồn tại trong CSDL chưa."""
+    conn = connect_db() # Sử dụng hàm connect_db() của bạn
+    if not conn:
+        return True 
+        
+    cur = conn.cursor()
+    # Dùng câu lệnh SELECT COUNT để kiểm tra nhanh nhất
+    # (Giữ nguyên %s nếu bạn dùng MySQL/MariaDB)
+    sql_query = "SELECT COUNT(MaHD) FROM HoaDon WHERE MaHD = %s" 
+    
+    try:
+        cur.execute(sql_query, (ma_hd_to_check,))
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0 
+    except Exception as e:
+        print(f"Lỗi kiểm tra CSDL: {e}")
+        conn.close()
+        return True
+    
 def create_database_root():
     """Hàm phụ: Kết nối quyền root để tạo Database rỗng."""
     try:
@@ -435,8 +459,11 @@ def open_hoadon_window():
     var_diachi = tk.StringVar()
     var_dienthoai = tk.StringVar()
 
-    current_time = datetime.now()
-    var_ma_hd.set(f"HDB{current_time.strftime('%d%m%Y_%H%M')}")
+    new_uuid = str(uuid.uuid4()) 
+    
+    # Bạn có thể bỏ tiền tố "HDB" nếu muốn dùng UUID trần
+    # hoặc ghép lại cho dễ nhận biết (MaHD mới khoảng 36-39 ký tự)
+    var_ma_hd.set(f"HDB{new_uuid}")
 
     tk.Label(frame_chung, text="Mã hóa đơn:").grid(row=0, column=0, sticky="w", pady=5)
     tk.Entry(frame_chung, textvariable=var_ma_hd, state="readonly", width=30).grid(row=0, column=1, pady=5)
