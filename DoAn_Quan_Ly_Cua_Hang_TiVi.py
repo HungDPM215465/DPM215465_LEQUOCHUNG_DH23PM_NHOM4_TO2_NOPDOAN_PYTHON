@@ -52,15 +52,52 @@ def connect_db(use_database=True):
         else:
             messagebox.showerror("Lỗi MySQL", f"Chi tiết lỗi: {err}")
             return None
+def get_next_invoice_id():
+    conn = connect_db()
+    
+    # *********** ĐIỀU KIỆN SỐ 1: KHÔNG KẾT NỐI ĐƯỢC CSDL ***********
+    if not conn: 
+        # Sử dụng UUID làm mã DUY NHẤT để tránh lỗi 1062
+        print("Lỗi: Không thể kết nối CSDL, sử dụng UUID làm Mã Hóa đơn dự phòng.")
+        return f"HDB{str(uuid.uuid4())}"
+        
+    cur = conn.cursor()
+    
+    try:
+        # Lấy Mã hóa đơn lớn nhất (ví dụ: HDB999)
+        cur.execute("SELECT MaHD FROM HoaDon ORDER BY LENGTH(MaHD) DESC, MaHD DESC LIMIT 1")
+        last_ma = cur.fetchone()
+        
+        if last_ma:
+            last_id_str = last_ma[0]
+            num_part = last_id_str[3:]
+            
+            if num_part.isdigit():
+                next_num = int(num_part) + 1
+                new_id = f"HDB{next_num:0{len(num_part)}d}"
+                return new_id
+            else:
+                # Nếu mã cũ không theo format HDBxxx, trả về UUID dự phòng
+                return f"HDB{str(uuid.uuid4())}"
+        else:
+            return "HDB0001" # Hóa đơn đầu tiên
+            
+    # *********** ĐIỀU KIỆN SỐ 2: LỖI KHI TRUY VẤN DỮ LIỆU ***********
+    except Exception as e:
+        # Nếu có lỗi CSDL khi thực hiện query, cũng dùng UUID dự phòng
+        print(f"Lỗi khi truy vấn MaHD: {e}. Sử dụng UUID làm Mã Hóa đơn dự phòng.")
+        return f"HDB{str(uuid.uuid4())}"
+        
+    finally:
+        if conn and conn.is_connected():
+            conn.close()
 def check_mahd_exists(ma_hd_to_check):
     """Kiểm tra xem Mã HD đã tồn tại trong CSDL chưa."""
-    conn = connect_db() # Sử dụng hàm connect_db() của bạn
+    conn = connect_db()
     if not conn:
         return True 
         
     cur = conn.cursor()
-    # Dùng câu lệnh SELECT COUNT để kiểm tra nhanh nhất
-    # (Giữ nguyên %s nếu bạn dùng MySQL/MariaDB)
     sql_query = "SELECT COUNT(MaHD) FROM HoaDon WHERE MaHD = %s" 
     
     try:
@@ -437,7 +474,6 @@ def open_window(title, columns, db_table, primary_key, fields_layout):
 
 
 def open_hoadon_window():
-    """Mở cửa sổ lập Hóa đơn bán hàng giống ảnh mẫu."""
     top_hd = tk.Toplevel(root)
     top_hd.title("Hóa đơn bán hàng")
     center_window(top_hd, 1000, 700)
@@ -459,8 +495,7 @@ def open_hoadon_window():
     var_diachi = tk.StringVar()
     var_dienthoai = tk.StringVar()
 
-    new_uuid = str(uuid.uuid4()) 
-    var_ma_hd.set(f"HDB{new_uuid}")
+    var_ma_hd.set(get_next_invoice_id())
 
     tk.Label(frame_chung, text="Mã hóa đơn:").grid(row=0, column=0, sticky="w", pady=5)
     tk.Entry(frame_chung, textvariable=var_ma_hd, state="readonly", width=30).grid(row=0, column=1, pady=5)
@@ -619,19 +654,10 @@ def open_hoadon_window():
     var_so_luong.trace("w", calculate_thanh_tien)
     var_giam_gia.trace("w", calculate_thanh_tien)
 
-    # 4. Thêm hàng vào bảng (Cart)
-    def add_to_cart():
-        ma = var_ma_hang.get()
-        if not ma: return
-        row = (ma, var_ten_hang.get(), var_so_luong.get(), 
-               var_don_gia.get(), var_giam_gia.get(), var_thanh_tien.get())
-        tree_ct.insert("", "end", values=row)
-        update_total()
-
     def update_total():
         total = 0
         for item in tree_ct.get_children():
-            total += float(tree_ct.item(item, "values")[5])
+            total += float(tree_ct.item(item, "values")[5]) 
         var_tong_cong.set(f"{total:,.0f}")
         lbl_bang_chu.config(text=f"Bằng chữ: (Đang cập nhật...)")
 
@@ -640,15 +666,67 @@ def open_hoadon_window():
         if selected:
             tree_ct.delete(selected)
             update_total()
-    
-    tree_ct.bind("<Double-1>", delete_item_cart)
 
-    # 5. Lưu hóa đơn xuống CSDL
+    def add_to_cart():
+        ma = var_ma_hang.get()
+        sl_nhap = var_so_luong.get() # Số lượng người dùng nhập
+        
+        if not ma or sl_nhap <= 0:
+            messagebox.showwarning("Lỗi", "Vui lòng chọn Mã hàng và nhập Số lượng lớn hơn 0.")
+            return
+
+        # 1. KIỂM TRA TỒN KHO VÀ SỐ LƯỢNG ĐÃ CÓ
+        conn = connect_db()
+        sl_ton = 0
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT SoLuongTon FROM SanPham WHERE MaSP = %s", (ma,))
+                result = cur.fetchone()
+                if result:
+                    sl_ton = result[0]
+                conn.close()
+            except Exception as e:
+                messagebox.showerror("Lỗi CSDL", f"Lỗi kiểm tra tồn kho: {e}")
+                if conn and conn.is_connected(): conn.close()
+                return
+        
+        # Kiểm tra xem sản phẩm đã có trong giỏ hàng chưa
+        item_to_update = None
+        for item in tree_ct.get_children():
+            values = tree_ct.item(item, "values")
+            if values[0] == ma:
+                item_to_update = item
+                break
+        
+        # 2. XỬ LÝ SỐ LƯỢNG:
+        if sl_nhap > sl_ton:
+            messagebox.showwarning("Cảnh báo Tồn Kho", f"Sản phẩm {ma} chỉ còn **{sl_ton}** cái trong kho. Không thể thêm {sl_nhap}!")
+            return 
+            
+        # 3. CẬP NHẬT HOẶC THÊM MỚI VÀO GIỎ
+        row_data = (ma, var_ten_hang.get(), sl_nhap, 
+                    var_don_gia.get(), var_giam_gia.get(), var_thanh_tien.get())
+            
+        if item_to_update:
+            # Cập nhật dòng đã có
+            tree_ct.item(item_to_update, values=row_data)
+            messagebox.showinfo("Cập nhật", f"Đã cập nhật số lượng sản phẩm {ma}!")
+        else:
+            # Thêm dòng mới
+            tree_ct.insert("", "end", values=row_data)
+        
+        update_total()
+
+ # 5. Lưu hóa đơn xuống CSDL và CẬP NHẬT TỒN KHO
     def save_invoice():
         if not tree_ct.get_children():
-            messagebox.showwarning("Lỗi", "Chưa có mặt hàng nào!")
+            messagebox.showwarning("Lỗi", "Chưa có mặt hàng nào trong hóa đơn!")
             return
-            
+        if not cbb_ma_nv.get() or not cbb_ma_kh.get():
+            messagebox.showwarning("Lỗi", "Vui lòng chọn Mã Nhân viên và Mã Khách hàng.")
+            return
+
         conn = connect_db()
         if not conn: return
         cur = conn.cursor()
@@ -656,23 +734,48 @@ def open_hoadon_window():
         try:
             ma_hd = var_ma_hd.get()
             ngay_lap = date_ngay_ban.get_date()
+            
+            tong_tien_float = float(var_tong_cong.get().replace(',', ''))
+            
             cur.execute("INSERT INTO HoaDon (MaHD, NgayLap, MaNV, MaKH, TongTien) VALUES (%s, %s, %s, %s, %s)",
-                        (ma_hd, ngay_lap, cbb_ma_nv.get(), cbb_ma_kh.get(), float(var_tong_cong.get().replace(',',''))))
+                        (ma_hd, ngay_lap, cbb_ma_nv.get(), cbb_ma_kh.get(), tong_tien_float))
+
 
             for item in tree_ct.get_children():
                 val = tree_ct.item(item, "values")
-
-                cur.execute("INSERT INTO ChiTietHoaDon (MaHD, MaSP, SoLuong, DonGia, ThanhTien) VALUES (%s, %s, %s, %s, %s)",
-                            (ma_hd, val[0], val[2], val[3], val[5]))
                 
+                ma_sp = val[0]
+                so_luong_ban = int(val[2]) 
+                don_gia = float(val[3])
+                thanh_tien = float(val[5])
+                cur.execute("INSERT INTO ChiTietHoaDon (MaHD, MaSP, SoLuong, DonGia, ThanhTien) VALUES (%s, %s, %s, %s, %s)",
+                            (ma_hd, ma_sp, so_luong_ban, don_gia, thanh_tien))
+                sql_update_stock = "UPDATE SanPham SET SoLuongTon = SoLuongTon - %s WHERE MaSP = %s"
+                cur.execute(sql_update_stock, (so_luong_ban, ma_sp))
             conn.commit()
-            messagebox.showinfo("Thành công", "Đã lưu hóa đơn!")
+            messagebox.showinfo("Thành công", "Đã lưu hóa đơn và cập nhật tồn kho!")
             top_hd.destroy()
+            
         except mysql.connector.Error as err:
-            messagebox.showerror("Lỗi CSDL", f"Lỗi: {err}")
+
+            conn.rollback()
+            
+            if err.errno == 1690:
+                 messagebox.showerror("Lỗi Tồn Kho", "Không thể lưu hóa đơn! Số lượng sản phẩm bán ra vượt quá số lượng tồn kho hiện tại (bán âm).")
+            elif err.errno == 1062:
+ 
+                 messagebox.showerror("Lỗi Trùng Mã", "Mã Hóa đơn đã tồn tại. Vui lòng **ĐÓNG CỬA SỔ** và tạo hóa đơn mới.")
+
+                 top_hd.destroy()
+            else:
+                messagebox.showerror("Lỗi CSDL", f"Lỗi không xác định: {err}")
+                
+        except Exception as e:
+            messagebox.showerror("Lỗi Hệ Thống", f"Lỗi trong quá trình xử lý: {e}")
+            
         finally:
-            conn.close()
-    
+            if conn and conn.is_connected():
+                conn.close()
 
     cbb_ma_nv.bind("<<ComboboxSelected>>", on_select_nv)
     cbb_ma_kh.bind("<<ComboboxSelected>>", on_select_kh)
@@ -1116,7 +1219,6 @@ def open_invoice_history_window():
 
 
 def create_main_window():
-    """Khởi tạo cửa sổ chính với Menu giống ảnh mẫu."""
     global root
     root = tk.Tk()
     root.title("Chương trình quản lý cửa hàng Tivi - Tkinter + MySQL")
@@ -1184,7 +1286,7 @@ def create_main_window():
     menubar.add_cascade(label="Tìm kiếm", menu=search_menu)
     search_menu.add_command(label="Tìm kiếm hàng hoá", command=open_search_product_window)
 
-    # 5. Menu: Báo cáo (ĐÃ CẬP NHẬT)
+    # 5. Menu: Báo cáo
     report_menu = tk.Menu(menubar, tearoff=0)
     menubar.add_cascade(label="Báo cáo", menu=report_menu)
     
